@@ -1,7 +1,7 @@
 "use server";
-
-import { SignupFormSchema, FormState } from "../lib/definintions";
+import { SignupFormSchema, LoginFormSchema , FormState } from "../lib/definintions";
 import bcrypt from "bcrypt";
+import { errors } from "jose";
 import { MongoClient, ServerApiVersion } from "mongodb";
 
 // MongoDB connection setup
@@ -46,7 +46,17 @@ export async function signup(state: FormState, formData: FormData) {
   try {
     // Get the users collection
     const users = await getUsersCollection();
-
+    // Check if the user already exists
+    const exisitingUser = await users.findOne({
+      email,
+    });
+    if (exisitingUser){
+      return {
+        errors: {
+          email: ["User already exists with this email address"],
+        },
+      }
+    }
     // Insert the new user
     const result = await users.insertOne({
       name,
@@ -54,7 +64,7 @@ export async function signup(state: FormState, formData: FormData) {
       password: hashedPassword,
       createdAt: new Date(),
     });
-
+    
     return { success: true, userId: result.insertedId };
   } catch (error) {
     console.error("Error inserting user:", error);
@@ -62,5 +72,62 @@ export async function signup(state: FormState, formData: FormData) {
   } finally {
     // Optionally close connection here if you want to, but usually keep it open for server lifetime
     // await client.close();
+  }
+}
+
+export async function login(state: FormState, formData: FormData) {
+  const validatedFields = LoginFormSchema.safeParse({
+    email: formData.get("email"),
+    password: formData.get("password")
+  })
+
+  if (!validatedFields.success){
+    return {
+      errors: validatedFields.error.flatten().fieldErrors,
+    }
+  }
+
+  const {email, password} = validatedFields.data;
+
+  try {
+    // Get the users collection
+    const users = await getUsersCollection();
+
+    // Find the user by email
+    const user = await users.findOne({ email });
+
+    if (!user) {
+      return { 
+        errors: {
+          email: [ "User not found" ]
+        }
+      };
+    }
+
+    // Compare the provided password with the stored hashed password
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+
+    if (!isPasswordValid) {
+      return { 
+        errors:{ 
+          password: ["Invalid Password" ]
+        }
+      };
+    }
+
+    localStorage.setItem('user', JSON.stringify({
+      userId: user._id,
+      username: user.name,
+      userEmail: user.email
+    }))
+
+    return { 
+      success: true, 
+      userId: user._id, 
+    };
+    
+  } catch (error) {
+    console.error("Error logging in user:", error);
+    return { error: "Failed to log in" };
   }
 }
